@@ -82,6 +82,41 @@ No simple method predicts a new patient's Day 14 — this is the gap the trained
 | `NegBinLoss(true_obs, mu, theta)` | Negative Binomial NLL as a replacement reconstruction loss. scRNA-seq data is count-based and overdispersed; NB is the generative model used by scVI and is more appropriate than Gaussian/MSE. Uses the lgamma formulation so it also works on log-normalized expression. `theta` is a learned per-gene dispersion parameter. |
 | `NonLesionalAlignmentLoss(latent_seq, nonlesional_centroid)` | Auxiliary loss pulling predicted latents at the final time point toward the non-lesional Day-0 centroid in latent space. Directly optimizes for RQ3. Non-lesional cells are held out of training (no data leakage) and used only as a healthy reference direction. |
 
+
+---
+
+### `scNODE/optim/layer_arch_ablation.py`
+
+**What changed:** Added three encoder–decoder architectural variants built on the original `LinearVAENet` and `LinearNet` classes. Changes are restricted to hidden layers; the VAE output heads, decoder output layer, and neural ODE remain unchanged.
+
+**Why:** The original scNODE uses fully connected networks to compress gene expression into latent representations. We investigate whether small modifications to normalization, regularization, and activation functions improve representation learning and generalization on the five-patient psoriasis dataset.
+
+| Variant | Modification | Motivation |
+|---|---|---|
+| `layernorm` | Adds `nn.LayerNorm` after hidden linear transformations, before activation | Layer Normalization (Ba et al., 2016) can stabilize activations and optimization independently of minibatch statistics. |
+| `dropout` | Adds `nn.Dropout` after hidden activations | Dropout (Srivastava et al., 2014) reduces co-adaptation and may limit overfitting to patient-specific transcriptional patterns. |
+| `gelu` | Replaces hidden activations with `nn.GELU` | GELU (Hendrycks and Gimpel, 2016) provides a smooth, input-dependent nonlinearity that may improve learned representations. |
+
+All variants preserve the original encoder's `(mu, std)` interface and the decoder's output dimensions, allowing integration without modifying `dynamic_model.py` or the loss functions.
+
+---
+
+### `scNODE/optim/running_arch_ablation.py`
+
+**What changed:** Created a separate copy of the existing training and model-construction code, adding architecture selection to `constructscNODEModel`. The existing training procedure and loss-function options are retained.
+
+**Why:** To evaluate encoder–decoder architecture changes independently of loss modifications, while preserving the original scNODE implementation for direct comparison.
+
+| Parameter | Default | Ablation values | Effect |
+|---|---|---|---|
+| `architecture` | `"baseline"` | `"layernorm"`, `"dropout"`, `"gelu"`, `"residual"` | Selects the encoder–decoder architecture while retaining the neural ODE. |
+| `dropout_p` | `0.1` | `0.1`, `0.2` | Controls dropout probability when `architecture="dropout"`. |
+| `latent_dim` | Existing required argument | `16`, `32`, `64` | Tests whether latent representation capacity affects reconstruction and temporal prediction. |
+
+Architecture experiments will retain the original reconstruction and distribution-matching objectives, with training settings and evaluation splits held fixed. Each modification will initially be evaluated independently.
+
+Initial synthetic-data tests verified compatible encoder/decoder output shapes and gradient propagation. Full training and held-out predictive evaluation remain pending.
+
 ---
 
 ### `scNODE/optim/running.py`
@@ -109,6 +144,10 @@ The per-iteration loss log is extended from 3 entries to 4: `[total, ot, dynamic
 | Sinkhorn blur (less smoothing) | `blur=0.01` | Tests whether sharper OT matching improves cell distribution prediction |
 | Sinkhorn blur (more smoothing) | `blur=0.5` | Tests whether looser matching prevents overfitting on the small dataset (5 patients) |
 | Non-lesional alignment | `nonlesional_ref=<tensor>` | Encodes the biological prior that treated cells should move toward healthy states |
+| Layer Normalization | `architecture="layernorm"` | Stabilizes hidden activations and may improve representation learning. |
+| Dropout | `architecture="dropout"`, `dropout_p=0.1/0.2` | Reduces overfitting to patient-specific transcriptional patterns and may improve generalization. |
+| GELU activation | `architecture="gelu"` | Tests whether smoother nonlinear activations improve latent feature representations. |
+| Latent dimensionality | `latent_dim=16/32/64` | Examines the tradeoff between preserving transcriptional information and limiting model complexity. |
 
 ---
 
@@ -118,3 +157,6 @@ The per-iteration loss log is extended from 3 entries to 4: `[total, ot, dynamic
 2. scNODE: Jiaqi Zhang, rsinghlab/scNODE
 3. scVI: Lopez et al. 2018, *Nature Methods*
 4. Optimal-transport analysis of single-cell gene expression — Schiebinger et al. 2019, *Cell*
+5. Layer Normalization: Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). Layer Normalization. *arXiv:1607.06450*. https://arxiv.org/abs/1607.06450
+6. Dropout: Srivastava, N., Hinton, G., Krizhevsky, A., Sutskever, I., & Salakhutdinov, R. (2014). Dropout: A Simple Way to Prevent Neural Networks from Overfitting. *Journal of Machine Learning Research*, 15(56), 1929–1958. https://www.jmlr.org/papers/v15/srivastava14a.html
+7. GELU: Hendrycks, D., & Gimpel, K. (2016). Gaussian Error Linear Units (GELUs). *arXiv:1606.08415*. https://arxiv.org/abs/1606.08415
